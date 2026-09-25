@@ -3,7 +3,7 @@
  * Plugin Name:       Actuent LAWP
  * Plugin URI:        https://docs.actuent.ai/#actions
  * Description:       Makes your site readable and actionable by AI agents. Publishes your site as LAWP at /.well-known/lawp.json, with executable "search" and "contact" actions.
- * Version:           1.0.0
+ * Version:           1.1.0
  * Requires at least: 5.8
  * Requires PHP:      7.4
  * Author:            localilabs
@@ -116,9 +116,19 @@ function actuent_lawp_build() {
 		$actions[] = array(
 			'id'          => 'contact',
 			'name'        => 'Contact ' . $name,
-			'description' => 'Send a message to the site owner. Include your name and how to reply in the message.',
+			'description' => 'Send a message to the site owner. They reply to the email address given.',
 			'intent'      => array( 'contact', 'message', 'email', 'get in touch', 'enquiry', 'ask a question' ),
-			'input'       => array( 'type' => 'text', 'required' => true ),
+			// LAWP 0.3 structured input: agents send these fields instead of free text.
+			'input'       => array(
+				'type'     => 'object',
+				'required' => true,
+				'fields'   => array(
+					array( 'name' => 'name', 'type' => 'string', 'required' => true, 'description' => 'Name of the person sending the message' ),
+					array( 'name' => 'email', 'type' => 'email', 'required' => true, 'description' => 'Email address for the reply' ),
+					array( 'name' => 'message', 'type' => 'string', 'required' => true, 'description' => 'The message' ),
+					array( 'name' => 'phone', 'type' => 'phone', 'required' => false, 'description' => 'Phone number, if they want a call back' ),
+				),
+			),
 			'endpoint'    => array( 'url' => rest_url( 'actuent/v1/contact' ), 'method' => 'POST' ),
 		);
 	}
@@ -297,17 +307,49 @@ function actuent_lawp_contact( WP_REST_Request $request ) {
 	if ( ! actuent_lawp_request_is_signed( $request, rest_url( 'actuent/v1/contact' ) ) ) {
 		return new WP_REST_Response( array( 'error' => 'Invalid Actuent signature' ), 401 );
 	}
-	$message = sanitize_textarea_field( actuent_lawp_input( $request ) );
-	if ( strlen( $message ) < 5 ) {
-		return new WP_REST_Response( array( 'error' => 'Provide the message as input (at least a few words)' ), 400 );
+	// Structured input (LAWP 0.3): { name, email, message, phone }. Plain text from older agents still works.
+	$json  = $request->get_json_params();
+	$input = is_array( $json ) && array_key_exists( 'input', $json ) ? $json['input'] : null;
+	if ( null === $input && 'GET' === $request->get_method() ) {
+		$input = array( 'name' => $request->get_param( 'name' ), 'email' => $request->get_param( 'email' ), 'message' => $request->get_param( 'message' ), 'phone' => $request->get_param( 'phone' ) );
+	}
+	$from_name = '';
+	$reply_to  = '';
+	$phone     = '';
+	if ( is_array( $input ) ) {
+		$from_name = isset( $input['name'] ) ? sanitize_text_field( (string) $input['name'] ) : '';
+		$reply_to  = isset( $input['email'] ) ? sanitize_email( (string) $input['email'] ) : '';
+		$phone     = isset( $input['phone'] ) ? sanitize_text_field( (string) $input['phone'] ) : '';
+		$message   = isset( $input['message'] ) ? sanitize_textarea_field( (string) $input['message'] ) : '';
+		$missing   = array();
+		if ( '' === $from_name ) {
+			$missing[] = 'name';
+		}
+		if ( ! is_email( $reply_to ) ) {
+			$missing[] = 'email';
+		}
+		if ( strlen( $message ) < 5 ) {
+			$missing[] = 'message';
+		}
+		if ( $missing ) {
+			return new WP_REST_Response( array( 'error' => 'Missing or invalid: ' . implode( ', ', $missing ) ), 400 );
+		}
+	} else {
+		$message = sanitize_textarea_field( actuent_lawp_input( $request ) );
+		if ( strlen( $message ) < 5 ) {
+			return new WP_REST_Response( array( 'error' => 'Provide the message as input (at least a few words)' ), 400 );
+		}
 	}
 	if ( actuent_lawp_is_test( $request ) ) {
 		return new WP_REST_Response( array( 'status' => 'ok', 'test' => true, 'message' => 'Test received and verified — no email was sent' ), 200 );
 	}
+	$details = $from_name ? sprintf( "From: %s <%s>%s\n\n", $from_name, $reply_to, $phone ? "\nPhone: " . $phone : '' ) : '';
+	$headers = $reply_to ? array( sprintf( 'Reply-To: %s <%s>', str_replace( array( '<', '>', '"', "\r", "\n" ), '', $from_name ), $reply_to ) ) : array();
 	$sent = wp_mail(
 		get_option( 'admin_email' ),
 		sprintf( '[%s] Message from an AI assistant via Actuent', get_bloginfo( 'name' ) ),
-		$message . "\n\n—\nSent by an AI assistant on behalf of its user, via Actuent (https://actuent.ai).\nRequest ID: " . sanitize_text_field( (string) $request->get_header( 'x_actuent_request_id' ) )
+		$details . $message . "\n\n—\nSent by an AI assistant on behalf of its user, via Actuent (https://actuent.ai).\nRequest ID: " . sanitize_text_field( (string) $request->get_header( 'x_actuent_request_id' ) ),
+		$headers
 	);
 	if ( ! $sent ) {
 		return new WP_REST_Response( array( 'error' => 'The site could not send the message right now' ), 502 );

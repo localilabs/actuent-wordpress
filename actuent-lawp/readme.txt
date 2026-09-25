@@ -4,7 +4,7 @@ Tags: ai, ai agents, chatgpt, claude, structured data
 Requires at least: 5.8
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 1.0.0
+Stable tag: 1.1.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -53,6 +53,9 @@ Yes. Untick "Let AI agents send you messages" in Settings → Actuent.
 Some hosts serve `/.well-known/` themselves. Ask your host to pass requests for `/.well-known/lawp.json` to WordPress.
 
 == Changelog ==
+
+= 1.1.0 =
+* The contact action now asks agents for a name, email address and message (LAWP 0.3 structured input), and replies go straight to the sender. Plain-text messages from older agents still work.
 
 = 1.0.0 =
 * First release: lawp.json, search and contact actions, custom actions, settings page.
