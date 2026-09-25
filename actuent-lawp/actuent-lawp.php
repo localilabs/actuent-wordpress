@@ -46,7 +46,12 @@ function actuent_lawp_options() {
 function actuent_lawp_summary( $text, $words = 60 ) {
 	$text = strip_shortcodes( (string) $text );
 	$text = wp_strip_all_tags( $text );
-	return wp_trim_words( $text, $words, '…' );
+	return html_entity_decode( wp_trim_words( $text, $words, '…' ), ENT_QUOTES | ENT_HTML5, 'UTF-8' );
+}
+
+// WordPress returns site names and titles HTML-encoded (e.g. &#039;); LAWP is plain text.
+function actuent_lawp_text( $value ) {
+	return html_entity_decode( wp_strip_all_tags( (string) $value ), ENT_QUOTES | ENT_HTML5, 'UTF-8' );
 }
 
 function actuent_lawp_path( $url ) {
@@ -56,8 +61,8 @@ function actuent_lawp_path( $url ) {
 
 function actuent_lawp_build() {
 	$options = actuent_lawp_options();
-	$name    = get_bloginfo( 'name' );
-	$tagline = get_bloginfo( 'description' );
+	$name    = actuent_lawp_text( get_bloginfo( 'name' ) );
+	$tagline = actuent_lawp_text( get_bloginfo( 'description' ) );
 	$host    = wp_parse_url( home_url(), PHP_URL_HOST );
 
 	$home_content = $options['description'] ? $options['description'] : $tagline;
@@ -91,8 +96,8 @@ function actuent_lawp_build() {
 		}
 		$content = actuent_lawp_summary( $page->post_content );
 		$pages[ $path ] = array(
-			'title'   => get_the_title( $page ),
-			'content' => $content ? $content : get_the_title( $page ),
+			'title'   => actuent_lawp_text( get_the_title( $page ) ),
+			'content' => $content ? $content : actuent_lawp_text( get_the_title( $page ) ),
 		);
 	}
 
@@ -279,7 +284,7 @@ function actuent_lawp_search( WP_REST_Request $request ) {
 	$results = array();
 	foreach ( $posts as $post ) {
 		$results[] = array(
-			'title'   => get_the_title( $post ),
+			'title'   => actuent_lawp_text( get_the_title( $post ) ),
 			'url'     => get_permalink( $post ),
 			'excerpt' => actuent_lawp_summary( $post->post_content, 40 ),
 		);
