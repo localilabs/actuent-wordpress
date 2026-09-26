@@ -4,7 +4,7 @@ Tags: ai, ai agents, chatgpt, claude, structured data
 Requires at least: 5.8
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 1.1.0
+Stable tag: 1.2.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -28,6 +28,7 @@ This plugin connects to Actuent (https://actuent.ai), made by localilabs:
 
 * To verify that contact requests really come from Actuent, it downloads Actuent's public signing keys from https://agents.actuent.ai/.well-known/actuent-signing-keys.json (cached for an hour). No data about your site or visitors is sent.
 * AI agents using Actuent read your `/.well-known/lawp.json` and call your enabled actions.
+* Only if you enter an Actuent API key under "AI bot visits": once an hour it sends your site's domain, the names of AI bots that visited (such as GPTBot or ClaudeBot) and daily visit counts to https://agents.actuent.ai/api/analytics. Nothing about human visitors, no IP addresses and no page URLs are sent. Off by default.
 
 Actuent privacy policy: https://docs.actuent.ai/privacy — Terms: https://docs.actuent.ai/terms
 
@@ -53,6 +54,10 @@ Yes. Untick "Let AI agents send you messages" in Settings → Actuent.
 Some hosts serve `/.well-known/` themselves. Ask your host to pass requests for `/.well-known/lawp.json` to WordPress.
 
 == Changelog ==
+
+= 1.2.0 =
+* Publishes /llms.txt, a Markdown summary of your site for AI, from the same pages (a real llms.txt file always wins).
+* Optional: count visits from AI bots (GPTBot, ClaudeBot, PerplexityBot and more) and see them in Actuent Analytics. Needs an Actuent Pro API key and a claimed site; only bot names and daily counts are sent.
 
 = 1.1.0 =
 * The contact action now asks agents for a name, email address and message (LAWP 0.3 structured input), and replies go straight to the sender. Plain-text messages from older agents still work.

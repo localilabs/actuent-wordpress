@@ -2,8 +2,8 @@
 /**
  * Plugin Name:       Actuent LAWP
  * Plugin URI:        https://docs.actuent.ai/#actions
- * Description:       Makes your site readable and actionable by AI agents. Publishes your site as LAWP at /.well-known/lawp.json, with executable "search" and "contact" actions.
- * Version:           1.1.0
+ * Description:       Makes your site readable and actionable by AI agents. Publishes your site as LAWP at /.well-known/lawp.json, with executable "search" and "contact" actions, plus /llms.txt and optional AI bot visit counts.
+ * Version:           1.2.0
  * Requires at least: 5.8
  * Requires PHP:      7.4
  * Author:            localilabs
@@ -17,7 +17,9 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'ACTUENT_LAWP_VERSION', '1.0.0' );
+define( 'ACTUENT_LAWP_VERSION', '1.2.0' );
+define( 'ACTUENT_LAWP_ANALYTICS', 'https://agents.actuent.ai/api/analytics?op=bot_hits' );
+define( 'ACTUENT_LAWP_BOT_HITS', 'actuent_lawp_bot_hits' );
 define( 'ACTUENT_LAWP_JWKS', 'https://agents.actuent.ai/.well-known/actuent-signing-keys.json' );
 define( 'ACTUENT_LAWP_CACHE', 'actuent_lawp_json' );
 
@@ -32,6 +34,8 @@ function actuent_lawp_defaults() {
 		'description'    => '',
 		'custom_actions' => '',
 		'page_limit'     => 20,
+		'llms_txt'       => 1,
+		'api_key'        => '',
 	);
 }
 
@@ -142,8 +146,7 @@ function actuent_lawp_build() {
 	}
 
 	return array(
-		'protocol'  => 'LAWP',
-		'version'   => '0.2.0',
+		'lawp_version' => '0.3',
 		'domain'    => $host,
 		'name'      => $name,
 		'pages'     => $pages,
@@ -187,6 +190,117 @@ function actuent_lawp_serve() {
 	exit;
 }
 add_action( 'init', 'actuent_lawp_serve', 0 );
+
+/* -------------------------------------------------------------------------
+ * llms.txt (https://llmstxt.org), made from the same pages
+ * ---------------------------------------------------------------------- */
+
+function actuent_lawp_llms_txt() {
+	$doc   = actuent_lawp_document();
+	$home  = isset( $doc['pages']['/'] ) ? $doc['pages']['/'] : array();
+	$lines = array( '# ' . $doc['name'], '', '> ' . preg_replace( '/\s+/', ' ', isset( $home['content'] ) ? $home['content'] : 'Website of ' . $doc['name'] . '.' ), '' );
+	$pages = array();
+	foreach ( $doc['pages'] as $path => $page ) {
+		if ( '/' !== $path ) {
+			$pages[] = sprintf( '- [%s](%s): %s', str_replace( array( '[', ']' ), '', $page['title'] ), home_url( $path ), preg_replace( '/\s+/', ' ', mb_substr( (string) $page['content'], 0, 200 ) ) );
+		}
+	}
+	if ( $pages ) {
+		$lines = array_merge( $lines, array( '## Pages', '' ), $pages, array( '' ) );
+	}
+	$lines = array_merge( $lines, array( '## For AI agents', '', '- [LAWP](' . home_url( '/.well-known/lawp.json' ) . '): Structured pages and actions for AI agents' ) );
+	return implode( "\n", $lines ) . "\n";
+}
+
+// A real llms.txt file in the site root is served by the web server before WordPress runs, so it always wins.
+function actuent_lawp_serve_llms() {
+	$options = actuent_lawp_options();
+	if ( empty( $options['llms_txt'] ) ) {
+		return;
+	}
+	$path = wp_parse_url( isset( $_SERVER['REQUEST_URI'] ) ? wp_unslash( $_SERVER['REQUEST_URI'] ) : '', PHP_URL_PATH ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+	$home = wp_parse_url( home_url(), PHP_URL_PATH );
+	if ( $path !== ( $home ? untrailingslashit( $home ) : '' ) . '/llms.txt' ) {
+		return;
+	}
+	status_header( 200 );
+	header( 'Content-Type: text/markdown; charset=utf-8' );
+	header( 'Access-Control-Allow-Origin: *' );
+	header( 'Cache-Control: public, max-age=300' );
+	echo actuent_lawp_llms_txt(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- plain text, built from sanitised site content.
+	exit;
+}
+add_action( 'init', 'actuent_lawp_serve_llms', 0 );
+
+/* -------------------------------------------------------------------------
+ * AI bot visits (optional): daily counts per bot, sent hourly to Actuent Analytics
+ * ---------------------------------------------------------------------- */
+
+function actuent_lawp_bot_name( $user_agent ) {
+	$bots = array( 'GPTBot', 'OAI-SearchBot', 'ChatGPT-User', 'ClaudeBot', 'Claude-User', 'Claude-SearchBot', 'anthropic-ai', 'PerplexityBot', 'Perplexity-User', 'Amazonbot', 'Bytespider', 'CCBot', 'meta-externalagent', 'FacebookBot', 'cohere-ai', 'DuckAssistBot', 'MistralAI-User', 'YouBot', 'Diffbot', 'Actuent' );
+	foreach ( $bots as $bot ) {
+		if ( false !== stripos( (string) $user_agent, $bot ) ) {
+			return $bot;
+		}
+	}
+	return null;
+}
+
+function actuent_lawp_count_bot() {
+	$options = actuent_lawp_options();
+	if ( '' === $options['api_key'] || is_admin() ) {
+		return;
+	}
+	$bot = actuent_lawp_bot_name( isset( $_SERVER['HTTP_USER_AGENT'] ) ? sanitize_text_field( wp_unslash( $_SERVER['HTTP_USER_AGENT'] ) ) : '' );
+	if ( ! $bot ) {
+		return;
+	}
+	$hits = get_option( ACTUENT_LAWP_BOT_HITS, array() );
+	$key  = gmdate( 'Y-m-d' ) . '|' . $bot;
+	$hits[ $key ] = ( isset( $hits[ $key ] ) ? (int) $hits[ $key ] : 0 ) + 1;
+	update_option( ACTUENT_LAWP_BOT_HITS, $hits, false );
+}
+add_action( 'init', 'actuent_lawp_count_bot', 1 );
+
+function actuent_lawp_send_bot_hits() {
+	$options = actuent_lawp_options();
+	$hits    = get_option( ACTUENT_LAWP_BOT_HITS, array() );
+	if ( '' === $options['api_key'] || ! $hits ) {
+		return;
+	}
+	$payload = array();
+	foreach ( $hits as $key => $count ) {
+		list( $day, $bot ) = explode( '|', $key, 2 );
+		$payload[]         = array( 'bot' => $bot, 'day' => $day, 'count' => (int) $count );
+	}
+	$response = wp_remote_post(
+		ACTUENT_LAWP_ANALYTICS,
+		array(
+			'timeout' => 10,
+			'headers' => array( 'Authorization' => 'Bearer ' . $options['api_key'], 'Content-Type' => 'application/json' ),
+			'body'    => wp_json_encode( array( 'domain' => preg_replace( '/^www\./', '', (string) wp_parse_url( home_url(), PHP_URL_HOST ) ), 'hits' => $payload ) ),
+		)
+	);
+	$code = wp_remote_retrieve_response_code( $response );
+	// Sent, or refused for good (key or claim problem): start counting afresh. Otherwise retry next hour.
+	if ( ! is_wp_error( $response ) && ( 200 === $code || 403 === $code || 401 === $code ) ) {
+		delete_option( ACTUENT_LAWP_BOT_HITS );
+	}
+	update_option( 'actuent_lawp_bot_status', is_wp_error( $response ) ? 'error' : (string) $code, false );
+}
+add_action( 'actuent_lawp_send_bot_hits', 'actuent_lawp_send_bot_hits' );
+
+function actuent_lawp_schedule() {
+	if ( ! wp_next_scheduled( 'actuent_lawp_send_bot_hits' ) ) {
+		wp_schedule_event( time() + 300, 'hourly', 'actuent_lawp_send_bot_hits' );
+	}
+}
+add_action( 'init', 'actuent_lawp_schedule' );
+
+function actuent_lawp_deactivate() {
+	wp_clear_scheduled_hook( 'actuent_lawp_send_bot_hits' );
+}
+register_deactivation_hook( __FILE__, 'actuent_lawp_deactivate' );
 
 /* -------------------------------------------------------------------------
  * Verifying that action requests really come from Actuent (Ed25519)
@@ -394,6 +508,8 @@ function actuent_lawp_sanitize( $input ) {
 	$clean['enable_contact'] = empty( $input['enable_contact'] ) ? 0 : 1;
 	$clean['description']    = isset( $input['description'] ) ? sanitize_textarea_field( $input['description'] ) : '';
 	$clean['page_limit']     = isset( $input['page_limit'] ) ? max( 1, min( 100, (int) $input['page_limit'] ) ) : 20;
+	$clean['llms_txt']       = empty( $input['llms_txt'] ) ? 0 : 1;
+	$clean['api_key']        = isset( $input['api_key'] ) ? preg_replace( '/[^A-Za-z0-9_.-]/', '', (string) $input['api_key'] ) : '';
 	$custom                  = isset( $input['custom_actions'] ) ? trim( wp_unslash( $input['custom_actions'] ) ) : '';
 	if ( '' !== $custom && ! is_array( json_decode( $custom, true ) ) ) {
 		add_settings_error( 'actuent_lawp', 'invalid_json', 'Custom actions must be a JSON array. Your other settings were saved.' );
@@ -442,6 +558,17 @@ function actuent_lawp_settings_page() {
 				<tr>
 					<th scope="row"><label for="actuent-limit">Pages included</label></th>
 					<td><input id="actuent-limit" type="number" min="1" max="100" name="actuent_lawp[page_limit]" value="<?php echo esc_attr( $options['page_limit'] ); ?>"> published pages</td>
+				</tr>
+				<tr>
+					<th scope="row">llms.txt</th>
+					<td><label><input type="checkbox" name="actuent_lawp[llms_txt]" value="1" <?php checked( $options['llms_txt'] ); ?>> Publish <a href="<?php echo esc_url( home_url( '/llms.txt' ) ); ?>" target="_blank">/llms.txt</a>, a summary of your site for AI (a real llms.txt file on your server always wins)</label></td>
+				</tr>
+				<tr>
+					<th scope="row"><label for="actuent-key">AI bot visits</label></th>
+					<td>
+						<input id="actuent-key" type="password" autocomplete="off" class="regular-text" name="actuent_lawp[api_key]" value="<?php echo esc_attr( $options['api_key'] ); ?>" placeholder="Actuent Pro API key (optional)">
+						<p class="description">Count visits from AI bots (GPTBot, ClaudeBot, PerplexityBot…) and see them in <a href="https://analytics.actuent.ai" target="_blank">Actuent Analytics</a>. Claim this site there first. Only bot names and daily counts are sent, hourly; nothing about human visitors. Pages served from a page cache aren't counted.<?php $status = get_option( 'actuent_lawp_bot_status' ); if ( $status ) { echo ' Last report: ' . esc_html( '200' === $status ? 'sent' : ( '403' === $status ? 'site not claimed with this key' : ( '401' === $status ? 'invalid key' : 'will retry' ) ) ) . '.'; } ?></p>
+					</td>
 				</tr>
 				<tr>
 					<th scope="row"><label for="actuent-custom">Custom actions</label></th>
