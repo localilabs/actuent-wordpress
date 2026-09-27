@@ -3,7 +3,7 @@
  * Plugin Name:       Actuent LAWP
  * Plugin URI:        https://docs.actuent.ai/#actions
  * Description:       Makes your site readable and actionable by AI agents. Publishes your site as LAWP at /.well-known/lawp.json, with executable "search" and "contact" actions, plus /llms.txt and optional AI bot visit counts.
- * Version:           1.3.0
+ * Version:           1.3.1
  * Requires at least: 5.8
  * Requires PHP:      7.4
  * Author:            localilabs
@@ -17,7 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'ACTUENT_LAWP_VERSION', '1.3.0' );
+define( 'ACTUENT_LAWP_VERSION', '1.3.1' );
 define( 'ACTUENT_LAWP_ANALYTICS', 'https://agents.actuent.ai/api/analytics?op=bot_hits' );
 define( 'ACTUENT_LAWP_BOT_HITS', 'actuent_lawp_bot_hits' );
 define( 'ACTUENT_LAWP_JWKS', 'https://agents.actuent.ai/.well-known/actuent-signing-keys.json' );
@@ -36,6 +36,7 @@ function actuent_lawp_defaults() {
 		'page_limit'     => 20,
 		'llms_txt'       => 1,
 		'api_key'        => '',
+		'verification'   => '',
 	);
 }
 
@@ -200,6 +201,11 @@ add_action( 'init', 'actuent_lawp_serve', 0 );
 // LAWP 0.4 discovery: point to the file from every page, for agents that don't check /.well-known/.
 function actuent_lawp_head_link() {
 	echo '<link rel="lawp" type="application/json" href="' . esc_url( home_url( '/.well-known/lawp.json' ) ) . '">' . "\n";
+	// Proves to Actuent that you own the site when you claim it in Actuent Analytics.
+	$options = actuent_lawp_options();
+	if ( '' !== $options['verification'] && is_front_page() ) {
+		echo '<meta name="actuent-site-verification" content="' . esc_attr( $options['verification'] ) . '">' . "\n";
+	}
 }
 add_action( 'wp_head', 'actuent_lawp_head_link', 1 );
 
@@ -538,6 +544,7 @@ function actuent_lawp_sanitize( $input ) {
 	$clean['page_limit']     = isset( $input['page_limit'] ) ? max( 1, min( 100, (int) $input['page_limit'] ) ) : 20;
 	$clean['llms_txt']       = empty( $input['llms_txt'] ) ? 0 : 1;
 	$clean['api_key']        = isset( $input['api_key'] ) ? preg_replace( '/[^A-Za-z0-9_.-]/', '', (string) $input['api_key'] ) : '';
+	$clean['verification']   = isset( $input['verification'] ) ? preg_replace( '/[^a-f0-9]/', '', strtolower( (string) $input['verification'] ) ) : '';
 	$custom                  = isset( $input['custom_actions'] ) ? trim( wp_unslash( $input['custom_actions'] ) ) : '';
 	if ( '' !== $custom && ! is_array( json_decode( $custom, true ) ) ) {
 		add_settings_error( 'actuent_lawp', 'invalid_json', 'Custom actions must be a JSON array. Your other settings were saved.' );
@@ -590,6 +597,13 @@ function actuent_lawp_settings_page() {
 				<tr>
 					<th scope="row">llms.txt</th>
 					<td><label><input type="checkbox" name="actuent_lawp[llms_txt]" value="1" <?php checked( $options['llms_txt'] ); ?>> Publish <a href="<?php echo esc_url( home_url( '/llms.txt' ) ); ?>" target="_blank">/llms.txt</a>, a summary of your site for AI (a real llms.txt file on your server always wins)</label></td>
+				</tr>
+				<tr>
+					<th scope="row"><label for="actuent-verification">Claim your site</label></th>
+					<td>
+						<input id="actuent-verification" type="text" class="regular-text code" name="actuent_lawp[verification]" value="<?php echo esc_attr( $options['verification'] ); ?>" placeholder="Verification code from Actuent Analytics">
+						<p class="description">In <a href="https://analytics.actuent.ai" target="_blank">Actuent Analytics → My sites</a>, enter your domain and paste the code shown here. It adds a verification tag to your homepage so you can claim the site and edit what AI agents see.</p>
+					</td>
 				</tr>
 				<tr>
 					<th scope="row"><label for="actuent-key">AI bot visits</label></th>
