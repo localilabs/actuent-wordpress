@@ -3,7 +3,7 @@
  * Plugin Name:       Actuent LAWP
  * Plugin URI:        https://docs.actuent.ai/#actions
  * Description:       Makes your site readable and actionable by AI agents. Publishes your site as LAWP at /.well-known/lawp.json, with executable "search" and "contact" actions, plus /llms.txt and optional AI bot visit counts.
- * Version:           1.2.0
+ * Version:           1.3.0
  * Requires at least: 5.8
  * Requires PHP:      7.4
  * Author:            localilabs
@@ -17,7 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'ACTUENT_LAWP_VERSION', '1.2.0' );
+define( 'ACTUENT_LAWP_VERSION', '1.3.0' );
 define( 'ACTUENT_LAWP_ANALYTICS', 'https://agents.actuent.ai/api/analytics?op=bot_hits' );
 define( 'ACTUENT_LAWP_BOT_HITS', 'actuent_lawp_bot_hits' );
 define( 'ACTUENT_LAWP_JWKS', 'https://agents.actuent.ai/.well-known/actuent-signing-keys.json' );
@@ -114,6 +114,9 @@ function actuent_lawp_build() {
 			'intent'      => array( 'search', 'find', 'look up', 'articles', 'posts' ),
 			'input'       => array( 'type' => 'text', 'required' => true ),
 			'endpoint'    => array( 'url' => rest_url( 'actuent/v1/search' ), 'method' => 'GET' ),
+			// LAWP 0.4: safe to run without asking, and what comes back.
+			'safety'      => array( 'requires_confirmation' => false, 'costs_money' => false, 'reversible' => true, 'destructive' => false ),
+			'output'      => array( 'fields' => array( array( 'name' => 'results', 'type' => 'string', 'description' => 'Matching posts and pages: title, url and excerpt' ) ) ),
 		);
 	}
 	if ( $options['enable_contact'] ) {
@@ -134,6 +137,9 @@ function actuent_lawp_build() {
 				),
 			),
 			'endpoint'    => array( 'url' => rest_url( 'actuent/v1/contact' ), 'method' => 'POST' ),
+			// LAWP 0.4: agents must show the message and ask before sending it.
+			'safety'      => array( 'requires_confirmation' => true, 'costs_money' => false, 'reversible' => false, 'destructive' => false ),
+			'output'      => array( 'fields' => array( array( 'name' => 'status', 'type' => 'enum', 'options' => array( 'sent' ) ) ) ),
 		);
 	}
 	$custom = json_decode( (string) $options['custom_actions'], true );
@@ -146,7 +152,7 @@ function actuent_lawp_build() {
 	}
 
 	return array(
-		'lawp_version' => '0.3',
+		'lawp_version' => '0.4',
 		'domain'    => $host,
 		'name'      => $name,
 		'pages'     => $pages,
@@ -190,6 +196,19 @@ function actuent_lawp_serve() {
 	exit;
 }
 add_action( 'init', 'actuent_lawp_serve', 0 );
+
+// LAWP 0.4 discovery: point to the file from every page, for agents that don't check /.well-known/.
+function actuent_lawp_head_link() {
+	echo '<link rel="lawp" type="application/json" href="' . esc_url( home_url( '/.well-known/lawp.json' ) ) . '">' . "\n";
+}
+add_action( 'wp_head', 'actuent_lawp_head_link', 1 );
+
+function actuent_lawp_link_header() {
+	if ( ! is_admin() && ! headers_sent() ) {
+		header( 'Link: <' . esc_url_raw( home_url( '/.well-known/lawp.json' ) ) . '>; rel="lawp"', false );
+	}
+}
+add_action( 'send_headers', 'actuent_lawp_link_header' );
 
 /* -------------------------------------------------------------------------
  * llms.txt (https://llmstxt.org), made from the same pages
@@ -378,6 +397,15 @@ function actuent_lawp_request_is_signed( WP_REST_Request $request, $endpoint_url
  * Executable actions (REST endpoints published in lawp.json)
  * ---------------------------------------------------------------------- */
 
+// LAWP 0.4 error object: { "error": { "code", "message", "field" } }.
+function actuent_lawp_error( $code, $message, $status, $field = null ) {
+	$error = array( 'code' => $code, 'message' => $message );
+	if ( $field ) {
+		$error['field'] = $field;
+	}
+	return new WP_REST_Response( array( 'error' => $error ), $status );
+}
+
 function actuent_lawp_is_test( WP_REST_Request $request ) {
 	$json = $request->get_json_params();
 	return ( is_array( $json ) && ! empty( $json['test'] ) )
@@ -394,7 +422,7 @@ function actuent_lawp_input( WP_REST_Request $request ) {
 function actuent_lawp_search( WP_REST_Request $request ) {
 	$query = sanitize_text_field( actuent_lawp_input( $request ) );
 	if ( '' === $query ) {
-		return new WP_REST_Response( array( 'error' => 'Provide a search query as input' ), 400 );
+		return actuent_lawp_error( 'missing_input', 'Provide a search query as input', 400, 'input' );
 	}
 	$posts   = get_posts(
 		array(
@@ -419,7 +447,7 @@ function actuent_lawp_search( WP_REST_Request $request ) {
 function actuent_lawp_contact( WP_REST_Request $request ) {
 	// Contact messages are accepted only from Actuent, so bots can't use this to spam you.
 	if ( ! actuent_lawp_request_is_signed( $request, rest_url( 'actuent/v1/contact' ) ) ) {
-		return new WP_REST_Response( array( 'error' => 'Invalid Actuent signature' ), 401 );
+		return actuent_lawp_error( 'invalid_signature', 'Invalid Actuent signature', 401 );
 	}
 	// Structured input (LAWP 0.3): { name, email, message, phone }. Plain text from older agents still works.
 	$json  = $request->get_json_params();
@@ -446,12 +474,12 @@ function actuent_lawp_contact( WP_REST_Request $request ) {
 			$missing[] = 'message';
 		}
 		if ( $missing ) {
-			return new WP_REST_Response( array( 'error' => 'Missing or invalid: ' . implode( ', ', $missing ) ), 400 );
+			return actuent_lawp_error( 'invalid_input', 'Missing or invalid: ' . implode( ', ', $missing ), 400, $missing[0] );
 		}
 	} else {
 		$message = sanitize_textarea_field( actuent_lawp_input( $request ) );
 		if ( strlen( $message ) < 5 ) {
-			return new WP_REST_Response( array( 'error' => 'Provide the message as input (at least a few words)' ), 400 );
+			return actuent_lawp_error( 'missing_input', 'Provide the message as input (at least a few words)', 400, 'message' );
 		}
 	}
 	if ( actuent_lawp_is_test( $request ) ) {
@@ -466,7 +494,7 @@ function actuent_lawp_contact( WP_REST_Request $request ) {
 		$headers
 	);
 	if ( ! $sent ) {
-		return new WP_REST_Response( array( 'error' => 'The site could not send the message right now' ), 502 );
+		return actuent_lawp_error( 'internal', 'The site could not send the message right now', 502 );
 	}
 	return new WP_REST_Response( array( 'status' => 'sent', 'message' => 'Your message was sent to the site owner.' ), 200 );
 }

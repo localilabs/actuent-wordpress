@@ -4,7 +4,7 @@ Tags: ai, ai agents, chatgpt, claude, structured data
 Requires at least: 5.8
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 1.2.0
+Stable tag: 1.3.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -54,6 +54,10 @@ Yes. Untick "Let AI agents send you messages" in Settings → Actuent.
 Some hosts serve `/.well-known/` themselves. Ask your host to pass requests for `/.well-known/lawp.json` to WordPress.
 
 == Changelog ==
+
+= 1.3.0 =
+* LAWP 0.4: pages link to your lawp.json (<link rel="lawp"> and a Link header) so every AI agent can find it.
+* Actions say when agents must ask first (safety) and what comes back (output), and errors use the standard LAWP format.
 
 = 1.2.0 =
 * Publishes /llms.txt, a Markdown summary of your site for AI, from the same pages (a real llms.txt file always wins).
