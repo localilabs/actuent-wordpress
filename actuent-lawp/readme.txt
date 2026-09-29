@@ -4,7 +4,7 @@ Tags: ai, ai agents, chatgpt, claude, structured data
 Requires at least: 5.8
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 1.3.1
+Stable tag: 1.3.2
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -54,6 +54,9 @@ Yes. Untick "Let AI agents send you messages" in Settings → Actuent.
 Some hosts serve `/.well-known/` themselves. Ask your host to pass requests for `/.well-known/lawp.json` to WordPress.
 
 == Changelog ==
+
+= 1.3.2 =
+* Lawpy, Actuent's mascot, on the settings page: he waves hello, and dances when your LAWP file is valid.
 
 = 1.3.1 =
 * Claim your site in Actuent Analytics by pasting your verification code in the settings (adds a verification tag to your homepage).

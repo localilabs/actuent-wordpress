@@ -3,7 +3,7 @@
  * Plugin Name:       Actuent LAWP
  * Plugin URI:        https://docs.actuent.ai/#actions
  * Description:       Makes your site readable and actionable by AI agents. Publishes your site as LAWP at /.well-known/lawp.json, with executable "search" and "contact" actions, plus /llms.txt and optional AI bot visit counts.
- * Version:           1.3.1
+ * Version:           1.3.2
  * Requires at least: 5.8
  * Requires PHP:      7.4
  * Author:            localilabs
@@ -17,7 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'ACTUENT_LAWP_VERSION', '1.3.1' );
+define( 'ACTUENT_LAWP_VERSION', '1.3.2' );
 define( 'ACTUENT_LAWP_ANALYTICS', 'https://agents.actuent.ai/api/analytics?op=bot_hits' );
 define( 'ACTUENT_LAWP_BOT_HITS', 'actuent_lawp_bot_hits' );
 define( 'ACTUENT_LAWP_JWKS', 'https://agents.actuent.ai/.well-known/actuent-signing-keys.json' );
@@ -554,6 +554,41 @@ function actuent_lawp_sanitize( $input ) {
 	return $clean;
 }
 
+/**
+ * The basics every LAWP document needs (the full rules: github.com/localilabs/lawp). Checked here, on
+ * the site, so the settings page doesn't call out to anyone.
+ */
+function actuent_lawp_is_valid( $doc ) {
+	return is_array( $doc )
+		&& ! empty( $doc['lawp_version'] )
+		&& ! empty( $doc['name'] )
+		&& ! empty( $doc['pages'] ) && is_array( $doc['pages'] );
+}
+
+/**
+ * Lawpy, Actuent's mascot, on the settings page: he waves hello, and dances when the site's LAWP is
+ * valid. Pixel-art sprite sheets bundled in assets/ (nothing is loaded from outside the site).
+ */
+function actuent_lawp_mascot( $valid ) {
+	$base  = plugins_url( 'assets/', __FILE__ );
+	$state = $valid ? 'dance' : 'wave';
+	// Frame width, frames, sheet height (Lawpy pixels) and seconds per loop.
+	$sheet = $valid ? array( 18, 12, 12, 1.2 ) : array( 14, 6, 11, 0.86 );
+	$scale = 5;
+	printf(
+		'<style>.actuent-lawpy{width:%1$dpx;height:%2$dpx;margin:14px 0 4px;image-rendering:pixelated;background:url(%3$s) no-repeat 0 100%%/%4$dpx %5$dpx;animation:actuent-lawpy %6$ss steps(%7$d) %8$s}@keyframes actuent-lawpy{to{background-position:-%4$dpx 100%%}}@media (prefers-reduced-motion:reduce){.actuent-lawpy{animation:none}}.actuent-lawpy-says{font-weight:600}</style><div class="actuent-lawpy" role="img" aria-label="%9$s"></div>',
+		(int) ( $sheet[0] * $scale ),
+		(int) ( 12 * $scale ),
+		esc_url( $base . 'lawpy-' . $state . '.svg' ),
+		(int) ( $sheet[0] * $sheet[1] * $scale ),
+		(int) ( $sheet[2] * $scale ),
+		esc_attr( $sheet[3] ),
+		(int) $sheet[1],
+		$valid ? 'infinite' : '3',
+		esc_attr__( 'Lawpy, the Actuent mascot', 'actuent-lawp' )
+	);
+}
+
 function actuent_lawp_admin_menu() {
 	add_options_page( 'Actuent LAWP', 'Actuent', 'manage_options', 'actuent-lawp', 'actuent_lawp_settings_page' );
 }
@@ -571,9 +606,12 @@ function actuent_lawp_settings_page() {
 	$options = actuent_lawp_options();
 	$url     = home_url( '/.well-known/lawp.json' );
 	$check   = 'https://docs.actuent.ai/#checker';
+	$lawpy = actuent_lawp_is_valid( actuent_lawp_document() );
 	?>
 	<div class="wrap">
+		<?php actuent_lawp_mascot( $lawpy ); ?>
 		<h1>Actuent LAWP</h1>
+		<p class="actuent-lawpy-says"><?php echo $lawpy ? esc_html__( 'Lawpy says: your LAWP file is valid, so AI agents can read this site.', 'actuent-lawp' ) : esc_html__( 'Lawpy says: your LAWP file is missing something: a site name (Settings → General) or at least one published page.', 'actuent-lawp' ); ?></p>
 		<p>Your site is published for AI agents at <a href="<?php echo esc_url( $url ); ?>" target="_blank"><?php echo esc_html( $url ); ?></a>.
 			Test it with the <a href="<?php echo esc_url( $check ); ?>" target="_blank">LAWP Checker</a>.</p>
 		<form method="post" action="options.php">
