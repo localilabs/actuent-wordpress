@@ -3,7 +3,7 @@
  * Plugin Name:       Actuent LAWP
  * Plugin URI:        https://docs.actuent.ai/#actions
  * Description:       Makes your site readable and actionable by AI agents. Publishes your site as LAWP at /.well-known/lawp.json, with executable "search" and "contact" actions, plus /llms.txt and optional AI bot visit counts.
- * Version:           1.3.2
+ * Version:           1.4.0
  * Requires at least: 5.8
  * Requires PHP:      7.4
  * Author:            localilabs
@@ -17,7 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'ACTUENT_LAWP_VERSION', '1.3.2' );
+define( 'ACTUENT_LAWP_VERSION', '1.4.0' );
 define( 'ACTUENT_LAWP_ANALYTICS', 'https://agents.actuent.ai/api/analytics?op=bot_hits' );
 define( 'ACTUENT_LAWP_BOT_HITS', 'actuent_lawp_bot_hits' );
 define( 'ACTUENT_LAWP_JWKS', 'https://agents.actuent.ai/.well-known/actuent-signing-keys.json' );
@@ -669,3 +669,79 @@ function actuent_lawp_action_links( $links ) {
 	return $links;
 }
 add_filter( 'plugin_action_links_' . plugin_basename( __FILE__ ), 'actuent_lawp_action_links' );
+
+/*
+ * Updates from GitHub releases (until the plugin is on WordPress.org): once a day WordPress asks
+ * github.com/localilabs/actuent-wordpress for the latest release; if it's newer, "update available"
+ * shows on the Plugins page and one-click updating installs the release's actuent-lawp.zip.
+ */
+define( 'ACTUENT_LAWP_RELEASES', 'https://api.github.com/repos/localilabs/actuent-wordpress/releases/latest' );
+
+function actuent_lawp_latest_release() {
+	$cached = get_site_transient( 'actuent_lawp_latest_release' );
+	if ( false !== $cached ) {
+		return $cached;
+	}
+	$release  = array();
+	$response = wp_remote_get( ACTUENT_LAWP_RELEASES, array( 'timeout' => 8, 'headers' => array( 'Accept' => 'application/vnd.github+json', 'User-Agent' => 'actuent-lawp/' . ACTUENT_LAWP_VERSION ) ) );
+	if ( ! is_wp_error( $response ) && 200 === wp_remote_retrieve_response_code( $response ) ) {
+		$data = json_decode( wp_remote_retrieve_body( $response ), true );
+		if ( is_array( $data ) && ! empty( $data['tag_name'] ) ) {
+			$zip = '';
+			foreach ( (array) ( $data['assets'] ?? array() ) as $asset ) {
+				if ( 'actuent-lawp.zip' === ( $asset['name'] ?? '' ) ) {
+					$zip = $asset['browser_download_url'];
+				}
+			}
+			$release = array(
+				'version' => ltrim( $data['tag_name'], 'v' ),
+				'zip'     => $zip,
+				'url'     => $data['html_url'] ?? 'https://github.com/localilabs/actuent-wordpress',
+				'notes'   => wp_kses_post( wpautop( esc_html( (string) ( $data['body'] ?? '' ) ) ) ),
+			);
+		}
+	}
+	// A day when it worked, an hour when GitHub didn't answer.
+	set_site_transient( 'actuent_lawp_latest_release', $release, $release ? DAY_IN_SECONDS : HOUR_IN_SECONDS );
+	return $release;
+}
+
+function actuent_lawp_check_update( $transient ) {
+	if ( empty( $transient->checked ) ) {
+		return $transient;
+	}
+	$release = actuent_lawp_latest_release();
+	$plugin  = plugin_basename( __FILE__ );
+	if ( ! empty( $release['zip'] ) && version_compare( $release['version'], ACTUENT_LAWP_VERSION, '>' ) ) {
+		$transient->response[ $plugin ] = (object) array(
+			'slug'        => 'actuent-lawp',
+			'plugin'      => $plugin,
+			'new_version' => $release['version'],
+			'package'     => $release['zip'],
+			'url'         => $release['url'],
+		);
+	}
+	return $transient;
+}
+add_filter( 'pre_set_site_transient_update_plugins', 'actuent_lawp_check_update' );
+
+// The "View details" box for the update.
+function actuent_lawp_update_details( $result, $action, $args ) {
+	if ( 'plugin_information' !== $action || 'actuent-lawp' !== ( $args->slug ?? '' ) ) {
+		return $result;
+	}
+	$release = actuent_lawp_latest_release();
+	if ( empty( $release ) ) {
+		return $result;
+	}
+	return (object) array(
+		'name'          => 'Actuent LAWP',
+		'slug'          => 'actuent-lawp',
+		'version'       => $release['version'],
+		'author'        => '<a href="https://localilabs.com">localilabs</a>',
+		'homepage'      => 'https://docs.actuent.ai',
+		'download_link' => $release['zip'],
+		'sections'      => array( 'changelog' => $release['notes'] ? $release['notes'] : 'See ' . esc_url( $release['url'] ) ),
+	);
+}
+add_filter( 'plugins_api', 'actuent_lawp_update_details', 10, 3 );
